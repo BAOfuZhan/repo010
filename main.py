@@ -294,12 +294,31 @@ def strategic_first_attempt(
             fidEnc=fid_enc or "",
         )
 
+        # 连接预热：发一次真实的 token GET 请求（结果丢弃），建好 TCP+TLS 连接，后续复用省 ~100-200ms
+        s.warm_connection(_token_url)
+
         if SUBMIT_MODE == "burst":
             # ── 定时连发（极限型）──
             n_shots = len(BURST_OFFSETS_MS)
             captchas_list = [captcha1, captcha2, captcha3]
 
-            if STRATEGIC_MODE == "A":
+            if STRATEGIC_MODE == "C":
+                # ── 策略 C + burst：等到 T + TOKEN_FETCH_DELAY_MS 取一次 token，复用给所有线程 ──
+                fetch_dt = target_dt + datetime.timedelta(milliseconds=TOKEN_FETCH_DELAY_MS)
+                while _beijing_now() < fetch_dt:
+                    time.sleep(0.001)
+                logging.info(
+                    f"[strategic] [burst-C] Fetching single reusable token at {_beijing_now()} "
+                    f"(target_dt + {TOKEN_FETCH_DELAY_MS}ms)"
+                )
+                pt, pv = s._get_page_token(_token_url, require_value=True)
+                if pt:
+                    logging.info(f"[strategic] [burst-C] Got token: {pt}")
+                else:
+                    logging.warning("[strategic] [burst-C] Token fetch failed, threads will fetch on-the-fly")
+                pre_tokens = [(pt, pv)] * n_shots
+
+            elif STRATEGIC_MODE == "A":
                 # 策略 A + burst：主线程在 T - PRE_FETCH_TOKEN_MS 提前取 1 份 token，
                 # 所有线程共用同一份，到点直接 POST，零 GET 延迟
                 burst_prefetch_dt = target_dt - datetime.timedelta(milliseconds=PRE_FETCH_TOKEN_MS)
@@ -365,7 +384,32 @@ def strategic_first_attempt(
         else:
             # ── 串行重试（稳健型）──
             # 每枪等到 HTTP 响应后，失败才发下一枪
-            if STRATEGIC_MODE == "A":
+            if STRATEGIC_MODE == "C":
+                # 策略 C：等到 T + TOKEN_FETCH_DELAY_MS 取一次 token 并立即提交
+                fetch_dt = target_dt + datetime.timedelta(milliseconds=TOKEN_FETCH_DELAY_MS)
+                while _beijing_now() < fetch_dt:
+                    time.sleep(0.001)
+                logging.info(
+                    f"[strategic] [C] Fetching token at {_beijing_now()} "
+                    f"(target_dt + {TOKEN_FETCH_DELAY_MS}ms)"
+                )
+                token1, value1 = s._get_page_token(_token_url, require_value=True)
+                if not token1:
+                    logging.error("[strategic] [C] Token fetch failed, skip this config")
+                    continue
+                logging.info(f"[strategic] [C] Got token: {token1}, immediately submit")
+                suc = s.get_submit(
+                    url=s.submit_url,
+                    times=times,
+                    token=token1,
+                    roomid=roomid,
+                    seatid=first_seat,
+                    captcha=captcha1,
+                    action=action,
+                    value=value1,
+                )
+
+            elif STRATEGIC_MODE == "A":
                 # 策略 A：目标时间前 PRE_FETCH_TOKEN_MS 毫秒预取 token，
                 #         目标时间后 FIRST_SUBMIT_OFFSET_MS 毫秒提交
                 pre_fetch_dt = target_dt - datetime.timedelta(milliseconds=PRE_FETCH_TOKEN_MS)
@@ -830,13 +874,15 @@ if __name__ == "__main__":
         strategy_cfg = config.get("strategy", {})
         STRATEGY_LOGIN_LEAD_SECONDS = int(strategy_cfg.get("login_lead_seconds", 18))
         STRATEGY_SLIDER_LEAD_SECONDS = int(strategy_cfg.get("slider_lead_seconds", 14))
-        STRATEGIC_MODE               = strategy_cfg.get("mode", "B")             # "A" | "B"
+        STRATEGIC_MODE               = strategy_cfg.get("mode", "B")             # "A" | "B" | "C"
         PRE_FETCH_TOKEN_MS           = int(strategy_cfg.get("pre_fetch_token_ms", 3000))   # 仅 mode=A
         FIRST_SUBMIT_OFFSET_MS       = int(strategy_cfg.get("first_submit_offset_ms", 89)) # mode=A: 提交延迟; mode=B: 取token延迟
         TARGET_OFFSET2_MS            = int(strategy_cfg.get("target_offset2_ms", 150))     # 仅 serial
         TARGET_OFFSET3_MS            = int(strategy_cfg.get("target_offset3_ms", 160))     # 仅 serial
         SUBMIT_MODE                  = strategy_cfg.get("submit_mode", "serial")  # "serial" | "burst"
         BURST_OFFSETS_MS             = strategy_cfg.get("burst_offsets_ms", [120, 420, 820])  # 仅 burst
+        # mode=C 预热取 token 参数
+        TOKEN_FETCH_DELAY_MS         = int(strategy_cfg.get("token_fetch_delay_ms", 50))   # 目标时间后多少 ms 取 token
 
         # 控制是否在每一轮主循环中都重新登录
         RELOGIN_EVERY_LOOP = bool(config.get("relogin_every_loop", RELOGIN_EVERY_LOOP))

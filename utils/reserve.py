@@ -169,6 +169,19 @@ class reserve:
         algorithm_value = token if require_value else ""
         return token, algorithm_value
 
+    def warm_connection(self, url):
+        """预热 TCP+TLS 连接池。
+
+        发送一次和获取 token 完全相同的真实 GET 请求，结果直接丢弃。
+        requests.Session 底层使用 urllib3 连接池，相同 host 的后续请求可复用已建立的连接，
+        跳过 TCP 三次握手 + TLS 协商，节省约 100-200ms。
+        """
+        try:
+            self.requests.get(url=url, verify=False, timeout=5)
+            logging.info(f"[warm] Connection pre-warmed via {url}")
+        except Exception as e:
+            logging.warning(f"[warm] Failed to warm connection: {e}")
+
     def get_login_status(self):
         self.requests.headers = self.login_headers
         self.requests.get(url=self.login_page, verify=False)

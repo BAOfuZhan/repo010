@@ -5,11 +5,11 @@
         {
             "username": "",
             "password": "",
-            "times": ["09:00", "23:00"],
-            "roomid": "13484",
-            "seatid": ["356"],
-            "seatPageId": "13484",
-            "fidEnc": "4a18e12602b24c8c",
+            "times": ["18:00", "22:00"],
+            "roomid": "11389",
+            "seatid": ["113"],
+            "seatPageId": "11389",
+            "fidEnc": "1b001674cae092c3",
             "daysofweek": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
         }
     ],
